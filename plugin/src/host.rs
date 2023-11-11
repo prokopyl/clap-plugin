@@ -202,6 +202,13 @@ impl<'a> HostMainThreadHandle<'a> {
     pub fn as_raw(&self) -> &'a clap_host {
         unsafe { &*self.raw }
     }
+
+    pub(crate) fn into_sublifetime<'s>(self) -> HostMainThreadHandle<'s> {
+        HostMainThreadHandle {
+            raw: self.raw,
+            _lifetime: PhantomData,
+        }
+    }
 }
 
 impl<'a> From<HostMainThreadHandle<'a>> for HostHandle<'a> {

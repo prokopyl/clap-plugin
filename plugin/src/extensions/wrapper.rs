@@ -3,18 +3,20 @@
 //! These unsafe utilities are targeted at extension implementors. Most `clack-plugin` users do not
 //! have to use those utilities to use extensions, see `clack-extensions` instead.
 
-use crate::host::{HostHandle, HostMainThreadHandle};
+use crate::host::{HostAudioThreadHandle, HostHandle, HostMainThreadHandle};
 use crate::plugin::{
     logging, AudioConfiguration, Plugin, PluginAudioProcessor, PluginBoxInner, PluginError,
     PluginMainThread, PluginShared,
 };
 use clap_sys::ext::log::*;
 use clap_sys::plugin::clap_plugin;
+use selfie::refs::RefType;
+use selfie::Selfie;
 use std::cell::UnsafeCell;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::marker::PhantomData;
 use std::panic::AssertUnwindSafe;
-use std::pin::Pin;
 use std::ptr::NonNull;
 
 pub(crate) mod panic {
@@ -32,6 +34,52 @@ pub(crate) mod panic {
     }
 }
 
+// TODO: bikeshed
+struct ReferencingShared<'a, P: Plugin> {
+    audio_processor: Option<UnsafeCell<P::AudioProcessor<'a>>>,
+    main_thread: UnsafeCell<P::MainThread<'a>>,
+}
+
+impl<'a, P: Plugin> ReferencingShared<'a, P> {
+    fn new<'x>(
+        // FIXME: why 'x: 'a is not accepted?
+        host: HostMainThreadHandle<'x>,
+        shared: &'a P::Shared<'x>,
+    ) -> Result<Self, PluginError> {
+        // TODO: safety
+        let shared: &P::Shared<'a> =
+            unsafe { &*(shared as *const P::Shared<'x> as *const () as *const P::Shared<'a>) };
+
+        let host: HostMainThreadHandle<'a> = host.into_sublifetime();
+
+        Ok(Self {
+            main_thread: UnsafeCell::new(P::MainThread::new(host.into_sublifetime(), shared)?),
+            audio_processor: None,
+        })
+    }
+
+    fn activate<'x: 'a>(
+        &mut self,
+        host: HostAudioThreadHandle<'a>,
+        shared: &'a P::Shared<'x>,
+        audio_config: AudioConfiguration,
+    ) -> Result<(), PluginError> {
+        // TODO: safety
+        let shared: &P::Shared<'a> =
+            unsafe { &*(shared as *const P::Shared<'x> as *const () as *const P::Shared<'a>) };
+        let processor =
+            P::AudioProcessor::activate(host, self.main_thread.get_mut(), shared, audio_config)?;
+        self.audio_processor = Some(UnsafeCell::new(processor));
+        Ok::<_, PluginError>(())
+    }
+}
+
+struct ReferencingSharedRef<P: Plugin>(PhantomData<P>);
+
+impl<'s, P: Plugin> RefType<'s> for ReferencingSharedRef<P> {
+    type Ref = ReferencingShared<'s, P>;
+}
+
 /// A wrapper around a `clack` plugin of a given type.
 ///
 /// This wrapper allows access to a plugin's [`Shared`](Plugin::Shared),
@@ -41,31 +89,33 @@ pub(crate) mod panic {
 /// The only way to access an instance of `PluginWrapper` is through the
 /// [`handle`](PluginWrapper::handle) function.
 pub struct PluginWrapper<'a, P: Plugin> {
-    audio_processor: Option<UnsafeCell<P::AudioProcessor<'a>>>,
-    main_thread: UnsafeCell<P::MainThread<'a>>,
-    shared: Pin<Box<P::Shared<'a>>>,
+    // audio_processor: Option<UnsafeCell<P::AudioProcessor<'a>>>,
+    // main_thread: UnsafeCell<P::MainThread<'a>>,
+    selfie: Selfie<'a, Box<P::Shared<'a>>, ReferencingSharedRef<P>>,
+    // shared: Pin<Box<P::Shared<'a>>>,
     host: HostHandle<'a>,
 }
 
 impl<'a, P: Plugin> PluginWrapper<'a, P> {
     pub(crate) fn new(host: HostMainThreadHandle<'a>) -> Result<Self, PluginError> {
         let shared = Box::pin(P::Shared::new(host.shared())?);
-        // SAFETY: this lives long enough
-        let shared_ref = unsafe { &*(shared.as_ref().get_ref() as *const _) };
-        let main_thread = UnsafeCell::new(P::MainThread::new(host, shared_ref)?);
+
+        let selfie = Selfie::<'a, _, ReferencingSharedRef<P>>::try_new(
+            shared,
+            move |shared_ref: &'_ P::Shared<'a>| ReferencingShared::new(host, shared_ref),
+        )
+        .map_err(|e| e.error)?;
 
         Ok(Self {
             host: host.shared(),
-            shared,
-            main_thread,
-            audio_processor: None,
+            selfie,
         })
     }
 
     /// # Safety
     /// Caller must ensure this method is only called on main thread and has exclusivity
     pub(crate) unsafe fn activate(
-        self: Pin<&mut Self>,
+        &mut self,
         audio_config: AudioConfiguration,
     ) -> Result<(), PluginWrapperError> {
         if self.is_active() {
@@ -74,43 +124,39 @@ impl<'a, P: Plugin> PluginWrapper<'a, P> {
 
         let shared = &*(self.shared() as *const _);
         let host = self.host;
-        // SAFETY: we only update the fields, we don't move the struct
-        let pinned_self = Pin::get_unchecked_mut(self);
 
-        let processor = P::AudioProcessor::activate(
-            host.as_audio_thread_unchecked(),
-            pinned_self.main_thread.get_mut(),
-            shared,
-            audio_config,
-        )?;
-        pinned_self.audio_processor = Some(UnsafeCell::new(processor));
+        self.selfie.with_referential_mut(|pinned_self| {
+            pinned_self.activate(host.as_audio_thread_unchecked(), shared, audio_config)
+        })?;
 
         Ok(())
     }
 
     /// # Safety
     /// Caller must ensure this method is only called on main thread, and has exclusivity on it
-    pub(crate) unsafe fn deactivate(self: Pin<&mut Self>) -> Result<(), PluginWrapperError> {
+    pub(crate) unsafe fn deactivate(&mut self) -> Result<(), PluginWrapperError> {
         // SAFETY: taking the audio processor does not move the whole struct
-        let pinned_self = Pin::get_unchecked_mut(self);
-        let audio_processor = &mut pinned_self.audio_processor;
+        self.selfie.with_referential_mut(|pinned_self| {
+            let audio_processor = &mut pinned_self.audio_processor;
 
-        match audio_processor.take() {
-            None => Err(PluginWrapperError::DeactivatedPlugin),
-            Some(audio_processor) => {
-                audio_processor
-                    .into_inner()
-                    .deactivate(pinned_self.main_thread.get_mut());
+            match audio_processor.take() {
+                None => Err(PluginWrapperError::DeactivatedPlugin),
+                Some(audio_processor) => {
+                    audio_processor
+                        .into_inner()
+                        .deactivate(pinned_self.main_thread.get_mut());
 
-                Ok(())
+                    Ok(())
+                }
             }
-        }
+        })
     }
 
     /// Returns if the current plugin has been activated or not.
     #[inline]
     pub fn is_active(&self) -> bool {
-        self.audio_processor.is_some()
+        self.selfie
+            .with_referential(|s| s.audio_processor.is_some())
     }
 
     /// Returns a reference to a plugin's [`Shared`](Plugin::Shared) struct.
@@ -119,7 +165,7 @@ impl<'a, P: Plugin> PluginWrapper<'a, P> {
     /// implement `Sync`.
     #[inline]
     pub fn shared(&self) -> &P::Shared<'a> {
-        &self.shared
+        self.selfie.owned()
     }
 
     /// Returns a raw, non-null pointer to the plugin's [`MainThread`](Plugin::MainThread)
@@ -131,9 +177,11 @@ impl<'a, P: Plugin> PluginWrapper<'a, P> {
     /// The pointer is safe to mutably dereference, as long as the caller ensures it is not being
     /// aliased, as per usual safety rules.
     #[inline]
-    pub unsafe fn main_thread(&self) -> NonNull<P::MainThread<'a>> {
-        // SAFETY: pointer has been created from reference, it cannot be null.
-        NonNull::new_unchecked(self.main_thread.get())
+    pub unsafe fn main_thread(&self) -> NonNull<P::MainThread<'_>> {
+        self.selfie.with_referential(|s| {
+            // SAFETY: pointer has been created from reference, it cannot be null.
+            NonNull::new_unchecked(s.main_thread.get())
+        })
     }
 
     /// Returns a raw, non-null pointer to the plugin's audio processor
@@ -155,12 +203,14 @@ impl<'a, P: Plugin> PluginWrapper<'a, P> {
     #[inline]
     pub unsafe fn audio_processor(
         &self,
-    ) -> Result<NonNull<P::AudioProcessor<'a>>, PluginWrapperError> {
-        self.audio_processor
-            .as_ref()
-            // SAFETY: pointer has been created from reference, it cannot be null.
-            .map(|p| NonNull::new_unchecked(p.get()))
-            .ok_or(PluginWrapperError::DeactivatedPlugin)
+    ) -> Result<NonNull<P::AudioProcessor<'_>>, PluginWrapperError> {
+        self.selfie.with_referential(|s| {
+            s.audio_processor
+                .as_ref()
+                // SAFETY: pointer has been created from reference, it cannot be null.
+                .map(|p| NonNull::new_unchecked(p.get()))
+                .ok_or(PluginWrapperError::DeactivatedPlugin)
+        })
     }
 
     /// Provides a shared reference to a plugin wrapper of a given type, to the given handler
@@ -239,7 +289,7 @@ impl<'a, P: Plugin> PluginWrapper<'a, P> {
         handler: F,
     ) -> Option<T>
     where
-        F: FnOnce(Pin<&mut PluginWrapper<'a, P>>) -> Result<T, PluginWrapperError>,
+        F: FnOnce(&mut PluginWrapper<'a, P>) -> Result<T, PluginWrapperError>,
     {
         match Self::handle_panic_mut(plugin, handler) {
             Ok(value) => Some(value),
@@ -265,18 +315,16 @@ impl<'a, P: Plugin> PluginWrapper<'a, P> {
 
     unsafe fn from_raw_mut<'p>(
         raw: *const clap_plugin,
-    ) -> Result<Pin<&'p mut Self>, PluginWrapperError> {
-        Ok(Pin::new_unchecked(
-            raw.as_ref()
-                .ok_or(PluginWrapperError::NullPluginInstance)?
-                .plugin_data
-                .cast::<PluginBoxInner<'a, P>>()
-                .as_mut()
-                .ok_or(PluginWrapperError::NullPluginData)?
-                .plugin_data
-                .as_mut()
-                .ok_or(PluginWrapperError::UninitializedPlugin)?,
-        ))
+    ) -> Result<&'p mut Self, PluginWrapperError> {
+        raw.as_ref()
+            .ok_or(PluginWrapperError::NullPluginInstance)?
+            .plugin_data
+            .cast::<PluginBoxInner<'a, P>>()
+            .as_mut()
+            .ok_or(PluginWrapperError::NullPluginData)?
+            .plugin_data
+            .as_mut()
+            .ok_or(PluginWrapperError::UninitializedPlugin)
     }
 
     unsafe fn handle_panic<T, F>(
@@ -297,7 +345,7 @@ impl<'a, P: Plugin> PluginWrapper<'a, P> {
         handler: F,
     ) -> Result<T, PluginWrapperError>
     where
-        F: FnOnce(Pin<&mut Self>) -> Result<T, PluginWrapperError>,
+        F: FnOnce(&mut Self) -> Result<T, PluginWrapperError>,
     {
         let plugin = Self::from_raw_mut(plugin)?;
 

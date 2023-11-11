@@ -10,6 +10,7 @@ rust-version = "1.59"
 [dependencies]
 clap-sys = { git = "https://github.com/robbert-vdh/clap-sys.git", branch = "feature/cstr-macro" }
 clack-common = { path = "../common" }
+selfie = "=0.0.2"
 
 [dev-dependencies]
 clack-host = { path = "../host" }
