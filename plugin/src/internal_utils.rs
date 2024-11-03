@@ -25,21 +25,6 @@ pub(crate) unsafe fn slice_from_external_parts<'a, T>(data: *const T, len: usize
     core::slice::from_raw_parts(data, len)
 }
 
-/// Same as [`slice_from_external_parts`] but for mut slices.
-///
-/// # Safety
-///
-/// Same as [`core::slice::from_raw_parts_mut`], except the provided pointer *can* be null or
-/// dangling for zero-length slices.
-#[inline]
-pub(crate) unsafe fn slice_from_external_parts_mut<'a, T>(data: *mut T, len: usize) -> &'a mut [T] {
-    if len == 0 {
-        return &mut [];
-    }
-
-    core::slice::from_raw_parts_mut(data, len)
-}
-
 /// Equivalent in spirit to `UnsafeCell<Option<T>>`, except you can read if the cell is set or not
 /// without invalidating potential active &mut references to the data.
 pub(crate) struct UnsafeOptionCell<T> {

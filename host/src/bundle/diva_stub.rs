@@ -52,22 +52,20 @@ impl<'a> PluginAudioProcessor<'a, DivaPluginStubShared<'a>, ()>
     fn process(
         &mut self,
         _process: Process,
-        mut audio: Audio,
+        audio: Audio,
         _events: Events,
     ) -> Result<ProcessStatus, PluginError> {
         self.shared.host.request_callback();
 
         for event in _events.input {
-            _events.output.try_push(event).unwrap();
+            _events.output.try_push(event)?;
         }
 
-        let mut output_channels = audio.output_port(0).unwrap().channels().unwrap();
-        let output_buf = output_channels.as_f32_mut().unwrap().iter_mut();
+        let output_channels = audio.output_port(0).unwrap().channels()?;
+        let output_buf = output_channels.to_f32().unwrap();
 
         for channel in output_buf {
-            for (input, output) in [42.0f32, 69.0, 21.0, 34.5].iter().zip(channel.iter_mut()) {
-                *output = *input;
-            }
+            channel.copy_from_slice(&[42.0f32, 69.0, 21.0, 34.5]);
         }
         Ok(ProcessStatus::Sleep)
     }

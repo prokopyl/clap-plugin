@@ -3,8 +3,6 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(missing_docs)]
 
-extern crate core;
-
 #[macro_use]
 pub mod entry;
 pub mod extensions;
@@ -35,7 +33,7 @@ pub mod prelude {
             PluginShared,
         },
         process::{
-            audio::{ChannelPair, SampleType},
+            audio::{AudioBuffer, ChannelPair, SampleType},
             Audio, Events, PluginAudioConfiguration, Process, ProcessStatus,
         },
         utils::ClapId,

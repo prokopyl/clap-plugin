@@ -141,7 +141,7 @@ impl StreamAudioProcessor {
         self.buffers.ensure_buffer_size_matches(data.len());
         let sample_count = self.buffers.cpal_buf_len_to_frame_count(data.len());
 
-        let (ins, mut outs) = self.buffers.prepare_plugin_buffers(data.len());
+        let (ins, outs) = self.buffers.prepare_plugin_buffers(data.len());
 
         let events = if let Some(midi) = self.midi_receiver.as_mut() {
             midi.receive_all_events(sample_count as u64)
@@ -151,7 +151,7 @@ impl StreamAudioProcessor {
 
         match self.audio_processor.process(
             &ins,
-            &mut outs,
+            &outs,
             &events,
             &mut OutputEvents::void(),
             Some(self.steady_counter),

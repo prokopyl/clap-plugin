@@ -13,10 +13,9 @@
 
 #![deny(missing_docs)]
 
-use self::audio_buffers::InputAudioBuffers;
 use crate::host::HostHandlers;
 use crate::plugin::{PluginAudioProcessorHandle, PluginInstanceError, PluginSharedHandle};
-use crate::prelude::{OutputAudioBuffers, PluginInstance};
+use crate::prelude::{AudioBuffers, PluginInstance};
 use crate::process::PluginAudioProcessor::*;
 use clack_common::events::event_types::TransportEvent;
 use clack_common::events::io::{InputEvents, OutputEvents};
@@ -417,10 +416,10 @@ impl<H: HostHandlers> StartedPluginAudioProcessor<H> {
     /// Process a chunk of audio frames and events.
     ///
     /// This plugin function requires the following arguments:
-    /// * `audio_inputs`: The [`InputAudioBuffers`] the plugin is going to read audio frames from.
-    ///   Can be [`InputAudioBuffers::empty`] if the plugin takes no audio input at all.
-    /// * `audio_output`: The [`OutputAudioBuffers`] the plugin is going to read audio frames from.
-    ///   Can be [`OutputAudioBuffers::empty`] if the plugin produces no audio output at all.
+    /// * `audio_inputs`: The [`AudioBuffers`] the plugin is going to read audio frames from.
+    ///   Can be [`AudioBuffers::empty`] if the plugin takes no audio input at all.
+    /// * `audio_output`: The [`AudioBuffers`] the plugin is going to read audio frames from.
+    ///   Can be [`AudioBuffers::empty`] if the plugin produces no audio output at all.
     /// * `input_events`: The [`InputEvents`] list the plugin is going to receive events from.
     ///   Can be [`InputEvents::empty`] if the plugin doesn't need to receive any events.
     /// * `output_events`: The [`OutputEvents`] buffer the plugin is going to write the events it
@@ -435,7 +434,7 @@ impl<H: HostHandlers> StartedPluginAudioProcessor<H> {
     ///   other plugin instances may receive.
     ///
     ///   The only requirement is that this value must be increased by at least the frame count
-    ///   of the audio buffers (see [`InputAudioBuffers::min_available_frames_with`]) for the next
+    ///   of the audio buffers (see [`AudioBuffers::min_available_frames_with`]) for the next
     ///   call to `process`.
     ///
     ///   This value can never decrease between two calls to `process`, unless [`reset`]
@@ -463,8 +462,8 @@ impl<H: HostHandlers> StartedPluginAudioProcessor<H> {
     /// [`reset`]: Self::reset
     pub fn process(
         &mut self,
-        audio_inputs: &InputAudioBuffers,
-        audio_outputs: &mut OutputAudioBuffers,
+        audio_inputs: &AudioBuffers,
+        audio_outputs: &AudioBuffers,
         input_events: &InputEvents,
         output_events: &mut OutputEvents,
         steady_time: Option<u64>,
@@ -472,19 +471,16 @@ impl<H: HostHandlers> StartedPluginAudioProcessor<H> {
     ) -> Result<ProcessStatus, PluginInstanceError> {
         let frames_count = audio_inputs.min_available_frames_with(audio_outputs);
 
-        let audio_inputs = audio_inputs.as_raw_buffers();
-        let audio_outputs = audio_outputs.as_raw_buffers();
-
         let process = clap_process {
             frames_count,
 
             in_events: input_events.as_raw(),
             out_events: output_events.as_raw_mut(),
 
-            audio_inputs: audio_inputs.as_ptr(),
-            audio_outputs: audio_outputs.as_mut_ptr(),
-            audio_inputs_count: audio_inputs.len() as u32,
-            audio_outputs_count: audio_outputs.len() as u32,
+            audio_inputs: audio_inputs.as_raw_buffers().cast(),
+            audio_outputs: audio_outputs.as_raw_buffers().cast(),
+            audio_inputs_count: audio_inputs.port_count() as u32,
+            audio_outputs_count: audio_outputs.port_count() as u32,
 
             steady_time: match steady_time {
                 None => -1,

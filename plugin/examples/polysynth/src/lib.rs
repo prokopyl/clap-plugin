@@ -88,23 +88,23 @@ impl<'a> PluginAudioProcessor<'a, PolySynthPluginShared, PolySynthPluginMainThre
     fn process(
         &mut self,
         _process: Process,
-        mut audio: Audio,
+        audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
         // First, we have to make a few sanity checks.
         // We want at least a single output port, which contains at least one channel of `f32`
         // audio sample data.
-        let mut output_port = audio
+        let output_port = audio
             .output_port(0)
             .ok_or(PluginError::Message("No output port found"))?;
 
-        let mut output_channels = output_port
+        let output_channels = output_port
             .channels()?
-            .into_f32()
+            .to_f32()
             .ok_or(PluginError::Message("Expected f32 output"))?;
 
         let output_buffer = output_channels
-            .channel_mut(0)
+            .channel(0)
             .ok_or(PluginError::Message("Expected at least one channel"))?;
 
         // Ensure the buffer is zero-filled, as all oscillators will just add to it.
@@ -119,7 +119,7 @@ impl<'a> PluginAudioProcessor<'a, PolySynthPluginShared, PolySynthPluginMainThre
 
             // With all the events out of the way, we can now handle a whole batch of sample
             // all at once.
-            let output_buffer = &mut output_buffer[event_batch.sample_bounds()];
+            let output_buffer = &output_buffer[event_batch.sample_bounds()];
             self.poly_osc.generate_next_samples(
                 output_buffer,
                 self.shared.params.get_volume(),
@@ -129,13 +129,12 @@ impl<'a> PluginAudioProcessor<'a, PolySynthPluginShared, PolySynthPluginMainThre
 
         // If somehow the host didn't give us a mono output, we copy the output to all channels
         if output_channels.channel_count() > 1 {
-            let (first_channel, other_channels) = output_channels.split_at_mut(1);
             // PANIC: we just checked that channel_count is > 1.
-            let first_channel = first_channel.channel(0).unwrap();
+            let first_channel = &output_channels[0];
 
             // Copy the first channel into all the other channels.
-            for other_channel in other_channels {
-                other_channel.copy_from_slice(first_channel)
+            for other_channel in output_channels.iter().skip(1) {
+                other_channel.copy_from_buffer(first_channel)
             }
         }
 

@@ -108,7 +108,7 @@ pub fn it_works() {
         latency: 0,
     }]);
 
-    let mut output_channels = outputs_descriptors.with_output_buffers([AudioPortBuffer {
+    let output_channels = outputs_descriptors.with_output_buffers([AudioPortBuffer {
         channels: AudioPortBufferType::f32_output_only(
             output_buffers.iter_mut().map(|b| b.as_mut_slice()),
         ),
@@ -118,7 +118,7 @@ pub fn it_works() {
     processor
         .process(
             &input_channels,
-            &mut output_channels,
+            &output_channels,
             &input_events.as_input(),
             &mut output_events.as_output(),
             None,

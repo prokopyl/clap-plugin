@@ -77,32 +77,32 @@ impl<'a> PluginAudioProcessor<'a, GainPluginShared, GainPluginMainThread<'a>>
     fn process(
         &mut self,
         _process: Process,
-        mut audio: Audio,
+        audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
         // First, we have to make a few sanity checks.
         // We want at least a single input/output port pair, which contains channels of `f32`
         // audio sample data.
-        let mut port_pair = audio
+        let port_pair = audio
             .port_pair(0)
             .ok_or(PluginError::Message("No input/output ports found"))?;
 
-        let mut output_channels = port_pair
+        let output_channels = port_pair
             .channels()?
-            .into_f32()
+            .to_f32()
             .ok_or(PluginError::Message("Expected f32 input/output"))?;
 
         let mut channel_buffers = [None, None];
 
         // Extract the buffer slices that we need, while making sure they are paired correctly and
         // check for either in-place or separate buffers.
-        for (pair, buf) in output_channels.iter_mut().zip(&mut channel_buffers) {
+        for (pair, buf) in output_channels.iter().zip(&mut channel_buffers) {
             *buf = match pair {
                 ChannelPair::InputOnly(_) => None,
                 ChannelPair::OutputOnly(_) => None,
                 ChannelPair::InPlace(b) => Some(b),
                 ChannelPair::InputOutput(i, o) => {
-                    o.copy_from_slice(i);
+                    o.copy_from_buffer(i);
                     Some(o)
                 }
             }
@@ -120,9 +120,9 @@ impl<'a> PluginAudioProcessor<'a, GainPluginShared, GainPluginMainThread<'a>>
             // Get the volume value after all parameter changes have been handled.
             let volume = self.shared.params.get_volume();
 
-            for buf in channel_buffers.iter_mut().flatten() {
-                for sample in buf.iter_mut() {
-                    *sample *= volume
+            for buf in channel_buffers.iter().flatten() {
+                for sample in *buf {
+                    sample.set(sample.get() * volume)
                 }
             }
         }

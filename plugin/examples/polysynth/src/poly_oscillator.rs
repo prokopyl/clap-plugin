@@ -6,6 +6,7 @@ use clack_plugin::events::event_types::{
     NoteOffEvent, NoteOnEvent, ParamModEvent, ParamValueEvent,
 };
 use clack_plugin::events::Match;
+use clack_plugin::process::audio::AudioBuffer;
 
 /// A voice in the polyphonic oscillator.
 ///
@@ -195,7 +196,7 @@ impl PolyOscillator {
     /// This method assumes the buffer is initialized with `0`s.
     pub fn generate_next_samples(
         &mut self,
-        output_buffer: &mut [f32],
+        output_buffer: &AudioBuffer<f32>,
         global_volume: f32,
         global_volume_mod: f32,
     ) {

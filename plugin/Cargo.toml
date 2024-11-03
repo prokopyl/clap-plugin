@@ -10,6 +10,7 @@ rust-version = "1.72.0"
 [dependencies]
 clap-sys = { workspace = true }
 clack-common = { workspace = true }
+ringbuf = "0.4.7"
 
 [dev-dependencies]
 clack-host = { workspace = true, default-features = false, features = ["clack-plugin"] }

@@ -1,6 +1,5 @@
-use crate::internal_utils::{slice_from_external_parts, slice_from_external_parts_mut};
-use crate::process::audio::BufferError;
-use clap_sys::audio_buffer::clap_audio_buffer;
+use crate::internal_utils::slice_from_external_parts;
+use crate::process::audio::{BufferError, CelledClapAudioBuffer};
 
 /// A generic enum to discriminate between buffers containing [`f32`] and [`f64`] sample types.
 ///
@@ -9,12 +8,10 @@ use clap_sys::audio_buffer::clap_audio_buffer;
 ///
 /// This type is used by methods that detect which types of sample buffers are available:
 ///
-/// * [`InputPort::channels`](super::InputPort::channels) returns a [`SampleType`] of
-///   [`InputChannels`](super::InputChannels);
-/// * [`OutputPort::channels`](super::OutputPort::channels) returns a [`SampleType`] of
-///   [`OutputChannels`](super::OutputChannels);
+/// * [`Port::channels`](super::Port::channels) returns a [`SampleType`] of
+///   [`Channels`](super::Channels);
 /// * [`PortPair::channels`](super::PortPair::channels) returns a [`SampleType`] of
-///   [`PairedChannels`](super::PairedChannels);
+///   [`ChannelsPairs`](super::ChannelsPairs);
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub enum SampleType<F32, F64> {
     /// Only [`f32`] sample buffers are available.
@@ -42,60 +39,17 @@ impl<F32, F64> SampleType<F32, F64> {
     /// ```
     /// use clack_plugin::process::audio::SampleType;
     ///
-    /// assert_eq!(SampleType::<f32, f64>::F32(1.0).as_f32(), Some(&1.0f32));
-    /// assert_eq!(SampleType::<f32, f64>::F64(1.0).as_f32(), None);
-    /// assert_eq!(SampleType::<f32, f64>::Both(1.0, 1.0).as_f32(), Some(&1.0f32));
+    /// assert_eq!(SampleType::<f32, f64>::F32(1.0).to_f32(), Some(1.0f32));
+    /// assert_eq!(SampleType::<f32, f64>::F64(1.0).to_f32(), None);
+    /// assert_eq!(SampleType::<f32, f64>::Both(1.0, 1.0).to_f32(), Some(1.0f32));
     /// ```
     #[inline]
-    pub fn as_f32(&self) -> Option<&F32> {
+    pub fn to_f32(&self) -> Option<F32>
+    where
+        F32: Copy,
+    {
         match self {
-            SampleType::F32(c) | SampleType::Both(c, _) => Some(c),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the `F32` sample buffer type if it is available,
-    /// or [`None`] otherwise.
-    ///
-    /// If both buffer types are available, the `F64` buffer type is ignored.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use clack_plugin::process::audio::SampleType;
-    ///
-    /// assert_eq!(SampleType::<f32, f64>::F32(1.0).as_f32_mut(), Some(&mut 1.0f32));
-    /// assert_eq!(SampleType::<f32, f64>::F64(1.0).as_f32_mut(), None);
-    /// assert_eq!(SampleType::<f32, f64>::Both(1.0, 1.0).as_f32_mut(), Some(&mut 1.0f32));
-    /// ```
-    #[inline]
-    pub fn as_f32_mut(&mut self) -> Option<&mut F32> {
-        match self {
-            SampleType::F32(c) | SampleType::Both(c, _) => Some(c),
-            _ => None,
-        }
-    }
-
-    /// Returns the `F32` sample buffer type if it is available, or [`None`] otherwise.
-    ///
-    /// If both buffer types are available, the `F64` buffer type is discarded.
-    ///
-    /// This method consumes the enum. For a non-consuming operation, see the
-    /// [`as_f32`](SampleType::as_f32) and [`as_f32_mut`](SampleType::as_f32_mut) methods.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use clack_plugin::process::audio::SampleType;
-    ///
-    /// assert_eq!(SampleType::<f32, f64>::F32(1.0).into_f32(), Some(1.0f32));
-    /// assert_eq!(SampleType::<f32, f64>::F64(1.0).into_f32(), None);
-    /// assert_eq!(SampleType::<f32, f64>::Both(1.0, 1.0).into_f32(), Some(1.0f32));
-    /// ```
-    #[inline]
-    pub fn into_f32(self) -> Option<F32> {
-        match self {
-            SampleType::F32(c) | SampleType::Both(c, _) => Some(c),
+            SampleType::F32(c) | SampleType::Both(c, _) => Some(*c),
             _ => None,
         }
     }
@@ -110,60 +64,17 @@ impl<F32, F64> SampleType<F32, F64> {
     /// ```
     /// use clack_plugin::process::audio::SampleType;
     ///
-    /// assert_eq!(SampleType::<f32, f64>::F32(1.0).as_f64(), None);
-    /// assert_eq!(SampleType::<f32, f64>::F64(1.0).as_f64(), Some(&1.0f64));
-    /// assert_eq!(SampleType::<f32, f64>::Both(1.0, 1.0).as_f64(), Some(&1.0f64));
+    /// assert_eq!(SampleType::<f32, f64>::F32(1.0).to_f64(), None);
+    /// assert_eq!(SampleType::<f32, f64>::F64(1.0).to_f64(), Some(1.0f64));
+    /// assert_eq!(SampleType::<f32, f64>::Both(1.0, 1.0).to_f64(), Some(1.0f64));
     /// ```
     #[inline]
-    pub fn as_f64(&self) -> Option<&F64> {
+    pub fn to_f64(&self) -> Option<F64>
+    where
+        F64: Copy,
+    {
         match self {
-            SampleType::F64(c) | SampleType::Both(_, c) => Some(c),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the `F64` sample buffer type if it is available,
-    /// or [`None`] otherwise.
-    ///
-    /// If both buffer types are available, the `F32` buffer type is ignored.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use clack_plugin::process::audio::SampleType;
-    ///
-    /// assert_eq!(SampleType::<f32, f64>::F32(1.0).as_f64_mut(), None);
-    /// assert_eq!(SampleType::<f32, f64>::F64(1.0).as_f64_mut(), Some(&mut 1.0f64));
-    /// assert_eq!(SampleType::<f32, f64>::Both(1.0, 1.0).as_f64_mut(), Some(&mut 1.0f64));
-    /// ```
-    #[inline]
-    pub fn as_f64_mut(&mut self) -> Option<&mut F64> {
-        match self {
-            SampleType::F64(c) | SampleType::Both(_, c) => Some(c),
-            _ => None,
-        }
-    }
-
-    /// Returns the `F64` sample buffer type if it is available, or [`None`] otherwise.
-    ///
-    /// If both buffer types are available, the `F32` buffer type is discarded.
-    ///
-    /// This method consumes the enum. For a non-consuming operation, see the
-    /// [`as_f32`](SampleType::as_f64) and [`as_f64_mut`](SampleType::as_f64_mut) methods.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use clack_plugin::process::audio::SampleType;
-    ///
-    /// assert_eq!(SampleType::<f32, f64>::F32(1.0).into_f64(), None);
-    /// assert_eq!(SampleType::<f32, f64>::F64(1.0).into_f64(), Some(1.0f64));
-    /// assert_eq!(SampleType::<f32, f64>::Both(1.0, 1.0).into_f64(), Some(1.0f64));
-    /// ```
-    #[inline]
-    pub fn into_f64(self) -> Option<F64> {
-        match self {
-            SampleType::F64(c) | SampleType::Both(_, c) => Some(c),
+            SampleType::F64(c) | SampleType::Both(_, c) => Some(*c),
             _ => None,
         }
     }
@@ -273,7 +184,7 @@ impl<'a> SampleType<&'a [*mut f32], &'a [*mut f64]> {
     ///
     /// The caller must ensure the provided buffer is valid.
     #[inline]
-    pub(crate) unsafe fn from_raw_buffer(raw: &clap_audio_buffer) -> Result<Self, BufferError> {
+    pub(crate) unsafe fn from_raw_buffer(raw: &CelledClapAudioBuffer) -> Result<Self, BufferError> {
         match (raw.data32.is_null(), raw.data64.is_null()) {
             (true, true) => {
                 if raw.channel_count == 0 {
@@ -299,39 +210,6 @@ impl<'a> SampleType<&'a [*mut f32], &'a [*mut f64]> {
                     raw.data64 as *const *mut f64,
                     raw.channel_count as usize,
                 ),
-            )),
-        }
-    }
-}
-
-impl<'a> SampleType<&'a mut [*mut f32], &'a mut [*mut f64]> {
-    /// # Safety
-    ///
-    /// The caller must ensure the provided buffer is valid, and that we have exclusive `&mut`
-    /// access to its contents.
-    #[inline]
-    pub(crate) unsafe fn from_raw_buffer_mut(
-        raw: &mut clap_audio_buffer,
-    ) -> Result<Self, BufferError> {
-        match (raw.data32.is_null(), raw.data64.is_null()) {
-            (true, true) => {
-                if raw.channel_count == 0 {
-                    Ok(SampleType::Both([].as_mut_slice(), [].as_mut_slice()))
-                } else {
-                    Err(BufferError::InvalidChannelBuffer)
-                }
-            }
-            (false, true) => Ok(SampleType::F32(slice_from_external_parts_mut(
-                raw.data32 as *mut _,
-                raw.channel_count as usize,
-            ))),
-            (true, false) => Ok(SampleType::F64(slice_from_external_parts_mut(
-                raw.data64 as *mut _,
-                raw.channel_count as usize,
-            ))),
-            (false, false) => Ok(SampleType::Both(
-                slice_from_external_parts_mut(raw.data32 as *mut _, raw.channel_count as usize),
-                slice_from_external_parts_mut(raw.data64 as *mut _, raw.channel_count as usize),
             )),
         }
     }

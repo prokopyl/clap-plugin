@@ -2,6 +2,7 @@
 //!
 //! This is where all the DSP math happens.
 
+use clack_plugin::process::audio::AudioBuffer;
 use std::f32::consts::{PI, TAU};
 
 /// A very basic Square Wave oscillator.
@@ -55,12 +56,12 @@ impl SquareOscillator {
     ///
     /// The given volume should be in the `0..1` range.
     #[inline]
-    pub fn add_next_samples_to_buffer(&mut self, buf: &mut [f32], volume: f32) {
+    pub fn add_next_samples_to_buffer(&mut self, buf: &AudioBuffer<f32>, volume: f32) {
         for value in buf {
             if self.current_phase <= PI {
-                *value += volume;
+                value.set(value.get() + volume);
             } else {
-                *value -= volume;
+                value.set(value.get() - volume);
             }
 
             self.current_phase += self.phase_increment;
