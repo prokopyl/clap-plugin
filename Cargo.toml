@@ -17,7 +17,7 @@ clack-plugin = { path = "./plugin", version = "0.1.0" }
 clack-host = { path = "./host", version = "0.1.0", default-features = false }
 clack-extensions = { path = "./extensions", version = "0.1.0" }
 
-clap-sys = "0.4.0"
+clap-sys = "0.5.0"
 
 bitflags = "2.4.2"
 libloading = "0.8.1"
